@@ -1,0 +1,51 @@
+name: tests
+
+on: [push]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run ruff
+        run: |
+          pipx install ruff
+          ruff check .
+
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install poetry
+        run: pipx install poetry
+      - name: Install dependencies
+        run: |
+          # use the matrix interpreter from setup-python, inside a venv -
+          # installing into the runner's system python fails on
+          # distro-managed packages and ignores the matrix version
+          poetry env use python
+          poetry install --no-interaction --no-ansi
+      - name: Test with pytest
+        run: |
+          poetry run python -m pytest --verbose --cov=stratestic --cov=tests --cov-report=xml
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false

@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stratestic - Institutional Quant Research Platform</title>
+    <meta name="description" content="State-of-the-art interactive backtesting, optimization, validation, and MT5 EA conversion platform for professional quants.">
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+<div class="app-container">
+    <!-- Persistent Top Navigation Bar -->
+    <nav class="top-nav">
+        <div class="brand">
+            <div class="brand-icon">📈</div>
+            <div>
+                <div class="brand-name">Stratestic</div>
+                <div class="brand-tag">v2.0-beta</div>
+            </div>
+        </div>
+        
+        <ul class="nav-links">
+            <li><a href="#library" class="nav-link active" id="link-library"><i data-lucide="layout-grid"></i> Library</a></li>
+            <li><a href="#import" class="nav-link" id="link-import"><i data-lucide="upload-cloud"></i> Import</a></li>
+            <li><a href="#backtest" class="nav-link" id="link-backtest"><i data-lucide="line-chart"></i> Backtest Lab</a></li>
+            <li><a href="#optimize" class="nav-link" id="link-optimize"><i data-lucide="cpu"></i> Optimization</a></li>
+            <li><a href="#validate" class="nav-link" id="link-validate"><i data-lucide="shield-alert"></i> Validation <span class="badge-phase">P2</span></a></li>
+            <li><a href="#portfolio" class="nav-link" id="link-portfolio"><i data-lucide="pie-chart"></i> Portfolio <span class="badge-phase">P3</span></a></li>
+            <li><a href="#report" class="nav-link" id="link-report"><i data-lucide="file-text"></i> Report</a></li>
+            <li><a href="#research" class="nav-link" id="link-research"><i data-lucide="sparkles"></i> AI Agent <span class="badge-phase">P3</span></a></li>
+        </ul>
+        
+        <div class="nav-status">
+            <span id="backend-status-badge" class="status-badge offline">DEMO MODE</span>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+        <!-- PAGE 1: Strategy Library -->
+        <section id="page-library" class="page-section active">
+            <div class="hero-section">
+                <h1>Quant Strategy Catalog</h1>
+                <p id="library-strategy-count">5 Strategies Available</p>
+                <div style="font-size: 14px; color: var(--text-secondary); max-width: 600px; margin: 10px auto 0 auto;">
+                    Select a strategy from the library below to begin backtesting, optimization, stability validation, or to generate deployment-ready production reports.
+                </div>
+            </div>
+
+            <!-- Search and Filtering -->
+            <div class="library-toolbar">
+                <div class="library-filters">
+                    <button class="filter-btn active" data-category="all">All Strategies</button>
+                    <button class="filter-btn" data-category="Trend">Trend Following</button>
+                    <button class="filter-btn" data-category="Mean Reversion">Mean Reversion</button>
+                    <button class="filter-btn" data-category="Momentum">Momentum</button>
+                    <button class="filter-btn" data-category="Custom">Custom / Custom SDK</button>
+                </div>
+                <a href="#import" class="btn btn-primary btn-sm">
+                    <i data-lucide="plus"></i> Import Strategy
+                </a>
+            </div>
+
+            <!-- Grid of Cards -->
+            <div class="strategy-grid" id="library-strategy-grid">
+                <!-- Dynamically populated in index.js -->
+            </div>
+        </section>
+
+        <!-- PAGE 2: Strategy Import -->
+        <section id="page-import" class="page-section">
+            <div class="page-header">
+                <h2>Strategy Integration Laboratory</h2>
+                <p>Convert MetaTrader 5 Expert Advisors (MQL5) or onboard custom Python strategy models using the Stratestic v2.0 SDK.</p>
+            </div>
+
+            <div class="import-layout">
+                <!-- Left panel: drag-and-drop & name -->
+                <div class="glass-card import-sidebar-card">
+                    <div class="upload-dropzone" id="import-dropzone">
+                        <i data-lucide="upload-cloud" class="upload-icon"></i>
+                        <h3>Drag & Drop Strategy</h3>
+                        <p>Accepts <code>.py</code> or <code>.mq5</code> files</p>
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('import-file-input').click()">
+                                <i data-lucide="folder-open"></i> Browse Files
+                            </button>
+                            <input type="file" id="import-file-input" style="display:none;" accept=".py,.mq5">
+                        </div>
+                    </div>
+
+                    <div class="import-meta-inputs">
+                        <div class="input-group">
+                            <label class="input-label" for="import-strategy-name">Workspace / Strategy Name</label>
+                            <input type="text" id="import-strategy-name" class="input-field" placeholder="e.g. Trend Follower SMA">
+                        </div>
+                        <button class="btn btn-primary" id="btn-import-submit" style="width: 100%; margin-top: 12px;">
+                            <i data-lucide="plus-circle"></i> Add to Library & Workspace
+                        </button>
+                    </div>
+
+                    <div class="console-logs" id="import-terminal" style="height: 200px; display: none; margin-top: 20px;">
+                        <!-- Terminal output -->
+                    </div>
+                </div>
+
+                <!-- Right panel: side-by-side translator -->
+                <div class="glass-card translation-card">
+                    <div class="translation-header">
+                        <h3>MQL5 Translation Workspace</h3>
+                        <div style="display: flex; gap: 8px;">
+                            <select id="sample-mq5-selector" class="input-field" style="width: 170px; background: #0c1017; font-size: 12px; height: 32px; padding: 0 10px;">
+                                <option value="moving_average_crossover">SMA Crossover EA (MQL5)</option>
+                                <option value="rsi_reversion">RSI Mean Reversion EA (MQL5)</option>
+                                <option value="macd_trend">MACD Trend Follower EA (MQL5)</option>
+                            </select>
+                            <button class="btn btn-accent btn-sm" id="btn-convert-mql5">
+                                <i data-lucide="refresh-cw"></i> Translate to Python
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="strategy-lab-grid">
+                        <div class="editor-pane">
+                            <div class="editor-label">
+                                <i data-lucide="file-code" style="color:var(--color-secondary)"></i>
+                                <span>MQL5 Source Editor</span>
+                            </div>
+                            <textarea class="editor-textarea" id="mql5-editor" spellcheck="false" placeholder="// Paste MQL5 Expert Advisor source code here..."></textarea>
+                            
+                            <div style="margin-top: 12px;">
+                                <div class="editor-label" style="font-size: 11px; margin-bottom: 4px;">Translator Logs</div>
+                                <div class="console-logs" id="conversion-terminal" style="height: 100px;">
+                                    <div class="console-line"><span class="console-timestamp">[12:00:00]</span> Ready to translate MQL5 source code...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="editor-pane">
+                            <div class="editor-label" style="display: flex; justify-content: space-between;">
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <i data-lucide="code-2" style="color:var(--color-primary)"></i>
+                                    <span>Generated Python Code</span>
+                                </div>
+                                <button class="btn btn-secondary btn-xs" id="btn-copy-python">
+                                    <i data-lucide="copy"></i> Copy
+                                </button>
+                            </div>
+                            <textarea class="editor-textarea" id="python-output" readonly spellcheck="false" placeholder="# Python translation will appear here..."></textarea>
+                            
+                            <div style="margin-top: 12px;">
+                                <div class="editor-header" style="margin-bottom: 4px;">
+                                    <div class="editor-label" style="font-size: 11px;">SDK Validation Checklist</div>
+                                    <button class="btn btn-primary btn-xs" id="btn-validate-strategy" style="background:var(--color-primary); color:black;">
+                                        <i data-lucide="shield-check"></i> Run Validator
+                                    </button>
+                                </div>
+                                <div class="validation-checklist" id="validator-results">
+                                    <div class="validation-item passed">
+                                        <span class="validation-icon">✓</span>
+                                        <span>Inherits from StrategyMixin class</span>
+                                    </div>
+                                    <div class="validation-item passed">
+                                        <span class="validation-icon">✓</span>
+                                        <span>Implements calculate_positions(self, data)</span>
+                                    </div>
+                                    <div class="validation-item passed">
+                                        <span class="validation-icon">✓</span>
+                                        <span>Implements get_signal(self, row)</span>
+                                    </div>
+                                    <div class="validation-item passed">
+                                        <span class="validation-icon">✓</span>
+                                        <span>Defines self.params dictionary</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 3: Backtest Lab -->
+        <section id="page-backtest" class="page-section">
+            <div class="workspace-layout">
+                <!-- Left config sidebar -->
+                <div class="workspace-sidebar glass-card">
+                    <div class="sidebar-header-info">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 id="backtest-strat-name">Strategy</h3>
+                            <a href="#library" class="change-strat-link"><i data-lucide="arrow-left"></i> Change</a>
+                        </div>
+                        <span class="category-tag" id="backtest-strat-cat">Trend</span>
+                        <p class="strat-desc" id="backtest-strat-desc">Configuring parameters for simulation.</p>
+                    </div>
+
+                    <div class="sidebar-scrollable-content">
+                        <!-- Active Workspace Selector -->
+                        <div class="input-group">
+                            <label class="input-label" for="workspace-select">Active Workspace</label>
+                            <div style="display:flex; gap:8px;">
+                                <select id="workspace-select" class="input-field" style="flex-grow:1;">
+                                    <!-- Filled dynamically -->
+                                </select>
+                                <button id="btn-add-workspace" class="btn btn-secondary" style="padding:0 12px; font-weight:bold; font-size: 16px;">+</button>
+                            </div>
+                        </div>
+
+                        <div class="config-divider">Backtesting Engine</div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-dataset">Historical Dataset</label>
+                            <select id="param-dataset" class="input-field">
+                                <option value="GOLD_M1_202001020905_202606191954">GOLD_M1_202001020905_202606191954</option>
+                                <option value="BTCUSDT" selected>BTCUSDT (Crypto)</option>
+                                <option value="ETHUSDT">ETHUSDT (Crypto)</option>
+                                <option value="SOLUSDT">SOLUSDT (Crypto)</option>
+                                <option value="AAPL">AAPL (US Equity)</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-timeframe">Timeframe</label>
+                            <select id="param-timeframe" class="input-field">
+                                <option value="1m">1 Minute</option>
+                                <option value="5m">5 Minutes</option>
+                                <option value="15m">15 Minutes</option>
+                                <option value="30m">30 Minutes</option>
+                                <option value="1h" selected>1 Hour</option>
+                                <option value="4h">4 Hours</option>
+                                <option value="1d">1 Day</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-max-bars">Max Bars</label>
+                            <input type="number" id="param-max-bars" class="input-field" value="600" min="50" step="50">
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-backtester">Backtest Model</label>
+                            <select id="param-backtester" class="input-field">
+                                <option value="vectorized">Vectorized Backtester</option>
+                                <option value="iterative">Iterative Backtester</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-capital">Initial Capital ($)</label>
+                            <input type="number" id="param-capital" class="input-field" value="10000" min="100" step="100">
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-costs">Trading Costs (%)</label>
+                            <input type="number" id="param-costs" class="input-field" value="0.05" min="0" max="5" step="0.01">
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-label" style="display:flex; justify-content:space-between;">
+                                <span>Leverage</span>
+                                <span id="leverage-val" style="color:var(--color-primary); font-family:var(--font-mono)">1x</span>
+                            </div>
+                            <input type="range" id="param-leverage" min="1" max="50" value="1" class="input-field" style="padding:0; accent-color:var(--color-primary);">
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="param-short-model">Short position model</label>
+                            <select id="param-short-model" class="input-field">
+                                <option value="static">Static (Exchange Short)</option>
+                                <option value="inverse">Inverse (Log-Symmetric)</option>
+                            </select>
+                        </div>
+
+                        <div class="config-divider">Strategy Parameters</div>
+                        <div id="dynamic-strategy-params" style="display:flex; flex-direction:column; gap:12px;">
+                            <!-- Dynamically populated parameters -->
+                        </div>
+                    </div>
+
+                    <div class="sidebar-action-buttons">
+                        <button class="btn btn-secondary" id="btn-reset-params">
+                            <i data-lucide="refresh-cw"></i> Reset Settings
+                        </button>
+                        <button class="btn btn-primary" id="btn-run-backtest">
+                            <i data-lucide="play"></i> Run Backtest
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right dashboard container -->
+                <div class="workspace-body">
+                    <!-- Liquidation banner -->
+                    <div class="liquidation-banner" id="liquidation-warning">
+                        <i data-lucide="alert-triangle"></i>
+                        <div>
+                            <strong>Margin Call Warning!</strong> A liquidation event was detected on <span id="liq-date">N/A</span>. Position force-closed. Capital wiped out. Try lowering leverage or adding margin.
+                        </div>
+                    </div>
+
+                    <!-- KPI Tiles -->
+                    <div class="kpi-grid">
+                        <div class="glass-card kpi-card">
+                            <div class="kpi-title">Strategy Return</div>
+                            <div class="kpi-value-container">
+                                <div class="kpi-value" id="kpi-strat-return">0.00%</div>
+                                <div class="kpi-badge" id="kpi-strat-badge">0.0x</div>
+                            </div>
+                            <div class="kpi-footer">Net strategy profit or loss</div>
+                        </div>
+                        <div class="glass-card kpi-card">
+                            <div class="kpi-title">Buy & Hold Return</div>
+                            <div class="kpi-value-container">
+                                <div class="kpi-value" id="kpi-bh-return">0.00%</div>
+                            </div>
+                            <div class="kpi-footer">Asset baseline performance</div>
+                        </div>
+                        <div class="glass-card kpi-card">
+                            <div class="kpi-title">Sharpe Ratio</div>
+                            <div class="kpi-value-container">
+                                <div class="kpi-value" id="kpi-sharpe">0.00</div>
+                            </div>
+                            <div class="kpi-footer">Risk-adjusted return profile</div>
+                        </div>
+                        <div class="glass-card kpi-card">
+                            <div class="kpi-title">Max Drawdown</div>
+                            <div class="kpi-value-container">
+                                <div class="kpi-value negative" id="kpi-max-drawdown">0.00%</div>
+                            </div>
+                            <div class="kpi-footer">Maximum peak-to-trough drop</div>
+                        </div>
+                    </div>
+
+                    <!-- Chart Viewport & Key Performance Ratios -->
+                    <div class="dashboard-grid">
+                        <div class="glass-card">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2 style="font-size:16px; font-family:var(--font-header);">Performance Analysis</h2>
+                                <div class="chart-header-actions">
+                                    <button class="chart-tab-btn active" data-chart-type="equity">Equity Curve</button>
+                                    <button class="chart-tab-btn" data-chart-type="drawdown">Drawdown</button>
+                                    <button class="chart-tab-btn" data-chart-type="margin">Margin Ratio</button>
+                                </div>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="main-chart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Quant Ratios -->
+                        <div class="glass-card">
+                            <h2 style="font-size:16px; font-family:var(--font-header); margin-bottom:16px;">Key Performance Ratios</h2>
+                            <div class="stats-redesign-container" style="display:flex; flex-direction:column; gap:16px;">
+                                
+                                <div class="metrics-group">
+                                    <div class="metrics-group-title" style="color:var(--color-primary);">RETURNS & DURATION</div>
+                                    <table class="metrics-table">
+                                        <tr><td>Duration</td><td id="stat-duration">-</td></tr>
+                                        <tr><td>Initial Equity</td><td id="stat-capital-init">-</td></tr>
+                                        <tr><td>Final Equity</td><td id="stat-capital-final">-</td></tr>
+                                        <tr><td>Peak Equity</td><td id="stat-capital-peak">-</td></tr>
+                                        <tr><td>Profit Factor</td><td id="stat-profit-factor">-</td></tr>
+                                    </table>
+                                </div>
+                                
+                                <div class="metrics-group">
+                                    <div class="metrics-group-title" style="color:var(--color-danger);">RISK METRICS</div>
+                                    <table class="metrics-table">
+                                        <tr><td>Sharpe Ratio</td><td id="stat-sharpe" style="font-weight:bold;">-</td></tr>
+                                        <tr><td>Sortino Ratio</td><td id="stat-sortino" style="font-weight:bold;">-</td></tr>
+                                        <tr><td>Calmar Ratio</td><td id="stat-calmar">-</td></tr>
+                                        <tr><td>Max Drawdown</td><td id="stat-max-dd" class="negative">-</td></tr>
+                                        <tr><td>Avg Drawdown</td><td id="stat-avg-dd">-</td></tr>
+                                        <tr><td>Max DD Duration</td><td id="stat-max-dd-dur">-</td></tr>
+                                    </table>
+                                </div>
+
+                                <div class="metrics-group">
+                                    <div class="metrics-group-title" style="color:var(--color-secondary);">EXECUTIONS</div>
+                                    <table class="metrics-table">
+                                        <tr><td>Total Trades</td><td id="stat-total-trades">-</td></tr>
+                                        <tr><td>Best Trade</td><td id="stat-best-trade" class="positive">-</td></tr>
+                                        <tr><td>Worst Trade</td><td id="stat-worst-trade" class="negative">-</td></tr>
+                                        <tr><td>Avg Trade</td><td id="stat-avg-trade">-</td></tr>
+                                        <tr><td>SQN</td><td id="stat-sqn">-</td></tr>
+                                    </table>
+                                </div>
+
+                                <div class="visual-progress-indicators">
+                                    <div>
+                                        <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
+                                            <span style="color:var(--text-secondary);">Win Rate</span>
+                                            <span id="progress-win-rate-val" style="font-family:var(--font-mono); font-weight:bold; color:var(--color-success);">-</span>
+                                        </div>
+                                        <div class="progress-track" style="height:4px;">
+                                            <div class="progress-fill" id="progress-win-rate-fill" style="background:var(--color-success);"></div>
+                                        </div>
+                                    </div>
+                                    <div style="margin-top: 8px;">
+                                        <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
+                                            <span style="color:var(--text-secondary);">Market Exposure</span>
+                                            <span id="progress-exposure-val" style="font-family:var(--font-mono); font-weight:bold; color:var(--color-primary);">-</span>
+                                        </div>
+                                        <div class="progress-track" style="height:4px;">
+                                            <div class="progress-fill" id="progress-exposure-fill" style="background:var(--color-primary);"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Nav Panel -->
+                    <div class="bottom-nav-actions glass-card">
+                        <a href="#library" class="bottom-action-btn"><i data-lucide="layout-grid"></i> Strategy Library</a>
+                        <a href="#optimize" id="btn-bottom-to-optimize" class="bottom-action-btn"><i data-lucide="cpu"></i> Optimize Parameters →</a>
+                        <a href="#validate" id="btn-bottom-to-validate" class="bottom-action-btn"><i data-lucide="shield-check"></i> Validate Robustness →</a>
+                        <a href="#report" id="btn-bottom-to-report" class="bottom-action-btn"><i data-lucide="file-text"></i> Production Report →</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 4: Optimization Suite -->
+        <section id="page-optimize" class="page-section">
+            <div class="workspace-layout">
+                <!-- Left panel: Settings -->
+                <div class="workspace-sidebar glass-card">
+                    <div class="sidebar-header-info">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 id="optimize-strat-name">Optimization Setup</h3>
+                            <a href="#library" class="change-strat-link"><i data-lucide="arrow-left"></i> Change</a>
+                        </div>
+                        <span class="category-tag" id="optimize-strat-cat">Setup</span>
+                        <p class="strat-desc" id="optimize-strat-desc">Configure parameter sweep ranges and algorithms.</p>
+                    </div>
+
+                    <div class="sidebar-scrollable-content">
+                        <div class="input-group">
+                            <label class="input-label" for="opt-algorithm">Optimization Algorithm</label>
+                            <select id="opt-algorithm" class="input-field">
+                                <option value="brute_force">Brute Force (Grid Sweep)</option>
+                                <option value="gen_alg">Genetic Algorithm (Heuristic)</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="opt-metric">Optimization Metric</label>
+                            <select id="opt-metric" class="input-field">
+                                <option value="Sharpe Ratio">Sharpe Ratio</option>
+                                <option value="Return">Total Return</option>
+                                <option value="Calmar Ratio">Calmar Ratio</option>
+                                <option value="Sortino Ratio">Sortino Ratio</option>
+                                <option value="Win Rate">Win Rate</option>
+                                <option value="Maximum Drawdown">Minimize Drawdown</option>
+                            </select>
+                        </div>
+
+                        <!-- Genetic Algorithm Params -->
+                        <div id="ga-parameters-block" style="display:flex; flex-direction:column; gap:12px;">
+                            <div class="input-group">
+                                <label class="input-label" for="opt-pop-size">Population Size</label>
+                                <input type="number" id="opt-pop-size" class="input-field" value="20" min="5" max="100">
+                            </div>
+                            <div class="input-group">
+                                <label class="input-label" for="opt-max-gen">Max Generations</label>
+                                <input type="number" id="opt-max-gen" class="input-field" value="15" min="2" max="50">
+                            </div>
+                            <div class="input-group">
+                                <label class="input-label" for="opt-mutation">Mutation Rate</label>
+                                <input type="number" id="opt-mutation" class="input-field" value="0.1" min="0" max="1" step="0.05">
+                            </div>
+                            <div class="input-group">
+                                <label class="input-label" for="opt-selection-strategy">Selection Strategy</label>
+                                <select id="opt-selection-strategy" class="input-field">
+                                    <option value="roulette_wheel">Roulette Wheel Selection</option>
+                                    <option value="tournament">Tournament Selection</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label">Parameter Sweeping Ranges</label>
+                            <table class="opt-bounds-table" id="opt-bounds-table">
+                                <thead>
+                                    <tr>
+                                        <th>Param</th>
+                                        <th>Min</th>
+                                        <th>Max</th>
+                                        <th id="th-step-or-size">Step</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="opt-bounds-tbody">
+                                    <!-- Dynamic bounds -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="sidebar-action-buttons">
+                        <button class="btn btn-accent" id="btn-run-optimization" style="width:100%;">
+                            <i data-lucide="zap"></i> Run Optimizer
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right panel: Results and Visualizers -->
+                <div class="workspace-body">
+                    <div class="optimizer-results-grid">
+                        <div class="glass-card" style="display:flex; flex-direction:column; gap:16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 10px;">
+                                <h3 style="font-size:16px; font-family:var(--font-header);">Optimization Convergence</h3>
+                                <button class="btn btn-secondary btn-sm" id="btn-export-params" disabled>
+                                    <i data-lucide="download"></i> Export Best Params
+                                </button>
+                            </div>
+
+                            <div style="display:flex; justify-content:space-between; font-size: 13px; color:var(--text-secondary)">
+                                <span>Best Fitness: <strong id="opt-best-fitness" style="color:var(--color-secondary); font-family:var(--font-mono)">-</strong></span>
+                                <span>Status: <strong id="opt-status-text" style="color:var(--text-muted)">Idle</strong></span>
+                            </div>
+
+                            <div class="opt-status-bar">
+                                <div class="progress-track"><div class="progress-fill" id="opt-progress-bar"></div></div>
+                                <span id="opt-progress-pct" style="font-family:var(--font-mono); font-size:12px; min-width:35px;">0%</span>
+                            </div>
+
+                            <div style="height: 250px; position: relative;">
+                                <canvas id="opt-chart"></canvas>
+                            </div>
+
+                            <div>
+                                <div class="editor-label" style="margin-bottom:6px; font-size:12px;">Optimizer Logs</div>
+                                <div class="console-logs" id="optimizer-terminal" style="height: 120px;">
+                                    <div class="console-line">Ready to sweep.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Heatmap Card -->
+                        <div class="glass-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px;">
+                                    <h3 style="font-size:16px; font-family:var(--font-header);">Parameter Stability Heatmap</h3>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; margin-bottom: 15px; font-size:12px;">
+                                    <div>X-Axis: <select id="heatmap-x-param" class="input-field" style="width:120px; font-size:11px; padding:2px 5px; height:24px;"></select></div>
+                                    <div>Y-Axis: <select id="heatmap-y-param" class="input-field" style="width:120px; font-size:11px; padding:2px 5px; height:24px;"></select></div>
+                                </div>
+                            </div>
+                            
+                            <div class="heatmap-container" style="flex-grow: 1; display:flex; justify-content:center; align-items:center; background: rgba(0,0,0,0.4); border-radius: var(--radius-md); border:1px solid var(--border-color); height: 260px; position:relative;">
+                                <canvas id="heatmap-canvas" style="width:100%; height:100%;"></canvas>
+                                <!-- Custom tooltip for heatmap -->
+                                <div id="heatmap-tooltip" style="position:absolute; display:none; background:var(--card-bg); border:1px solid var(--border-color); padding:8px; border-radius:4px; font-size:11px; pointer-events:none; z-index:10;"></div>
+                            </div>
+
+                            <div style="display:flex; justify-content:space-between; margin-top: 15px;">
+                                <a href="#backtest" class="btn btn-secondary btn-sm" id="btn-apply-heatmap"><i data-lucide="arrow-left"></i> Apply to Backtest</a>
+                                <a href="#validate" class="btn btn-primary btn-sm" style="background:var(--color-secondary); border-color:var(--color-secondary); color:white;">Go to Validation Lab <i data-lucide="arrow-right"></i></a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 5: Validation Lab -->
+        <section id="page-validate" class="page-section">
+            <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
+                <div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <h2>Strategy Validation Laboratory</h2>
+                        <span class="badge-phase">PHASE 2</span>
+                    </div>
+                    <p>Ensure strategy durability. Stress test performance against regime transitions, Monte Carlo noise, and walk forward degradation.</p>
+                </div>
+                <div>
+                    <button class="btn btn-primary" id="btn-run-validation">
+                        <i data-lucide="shield-check"></i> Run Full Validation Suite
+                    </button>
+                </div>
+            </div>
+
+            <!-- Two-column main layout -->
+            <div class="workspace-layout">
+                <!-- Left panel: Settings -->
+                <div class="workspace-sidebar glass-card">
+                    <div class="sidebar-header-info">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 id="val-strat-name">Validation Setup</h3>
+                            <a href="#library" class="change-strat-link"><i data-lucide="arrow-left"></i> Change</a>
+                        </div>
+                        <span class="category-tag" id="val-strat-cat">Setup</span>
+                        <p class="strat-desc" id="val-strat-desc">Configure stress test parameters.</p>
+                    </div>
+
+                    <div class="sidebar-scrollable-content">
+                        <!-- Robustness Score Gauge -->
+                        <div style="display:flex; flex-direction:column; align-items:center; margin: 10px 0 20px 0;">
+                            <div style="position:relative; width:140px; height:140px;">
+                                <canvas id="robustness-gauge-canvas" width="140" height="140"></canvas>
+                                <div style="position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                                    <span id="robustness-score-val" style="font-size:32px; font-family:var(--font-mono); font-weight:bold; color:var(--text-primary); line-height:1;">-</span>
+                                    <span id="robustness-grade-label" style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; margin-top:4px;">Not Scored</span>
+                                </div>
+                            </div>
+                            <div style="text-align:center; font-size:12px; color:var(--text-secondary); margin-top:10px;">Proprietary Robustness Score</div>
+                        </div>
+
+                        <div class="config-divider">Walk Forward Analysis</div>
+                        <div class="input-group">
+                            <label class="input-label">Data Segments</label>
+                            <div style="display:flex; justify-content:space-between; gap:10px;">
+                                <div style="flex:1;">
+                                    <label style="font-size:10px; color:var(--text-secondary)">Train (%)</label>
+                                    <input type="number" id="val-wfa-train" class="input-field" value="60" min="10" max="80">
+                                </div>
+                                <div style="flex:1;">
+                                    <label style="font-size:10px; color:var(--text-secondary)">Validate (%)</label>
+                                    <input type="number" id="val-wfa-val" class="input-field" value="20" min="10" max="50">
+                                </div>
+                                <div style="flex:1;">
+                                    <label style="font-size:10px; color:var(--text-secondary)">Test (%)</label>
+                                    <input type="number" id="val-wfa-test" class="input-field" value="20" min="10" max="50" disabled>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-divider">Monte Carlo Engine</div>
+                        <div class="input-group">
+                            <label class="input-label">Simulations</label>
+                            <input type="number" id="val-mc-sims" class="input-field" value="1000" min="100" max="10000" step="100">
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">Max Slippage Penalty (%)</label>
+                            <input type="number" id="val-mc-slip" class="input-field" value="0.1" min="0" max="2" step="0.05">
+                        </div>
+
+                        <div class="config-divider">Regime Detection</div>
+                        <div class="input-group">
+                            <label class="input-label">Trend Filter (SMA)</label>
+                            <input type="number" id="val-regime-sma" class="input-field" value="50" min="10" max="200">
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">Volatility Filter (ATR)</label>
+                            <input type="number" id="val-regime-atr" class="input-field" value="20" min="5" max="100">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right dashboard container -->
+                <div class="workspace-body" style="display:flex; flex-direction:column; gap:20px;">
+                    <!-- Walk Forward -->
+                    <div class="glass-card">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:15px;">
+                            <i data-lucide="split" style="color:var(--color-primary)"></i>
+                            <h3 style="font-family:var(--font-header); font-size:16px;">Walk Forward Analysis</h3>
+                        </div>
+                        
+                        <div id="wfa-timeline" style="display:flex; height:24px; border-radius:4px; overflow:hidden; margin-bottom:15px; background:#1c2128;">
+                            <!-- populated dynamically -->
+                            <div style="width:100%; text-align:center; line-height:24px; font-size:12px; color:var(--text-muted);">Run validation to generate splits</div>
+                        </div>
+                        
+                        <table class="metrics-table wfa-table" style="width:100%;">
+                            <thead>
+                                <tr>
+                                    <th style="text-align:left;">Metric</th>
+                                    <th>In-Sample (Train)</th>
+                                    <th>Out-of-Sample (Validate)</th>
+                                    <th>Hold-Out (Test)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="wfa-results-tbody">
+                                <tr><td>Return</td><td class="col-train">-</td><td class="col-val">-</td><td class="col-test">-</td></tr>
+                                <tr><td>Sharpe</td><td class="col-train">-</td><td class="col-val">-</td><td class="col-test">-</td></tr>
+                                <tr><td>Max DD</td><td class="col-train">-</td><td class="col-val">-</td><td class="col-test">-</td></tr>
+                                <tr><td>Win Rate</td><td class="col-train">-</td><td class="col-val">-</td><td class="col-test">-</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div style="display:flex; gap:20px;">
+                        <!-- Monte Carlo -->
+                        <div class="glass-card" style="flex:1; display:flex; flex-direction:column;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                                <i data-lucide="shuffle" style="color:var(--color-secondary)"></i>
+                                <h3 style="font-family:var(--font-header); font-size:16px;">Monte Carlo Engine</h3>
+                            </div>
+                            <p style="font-size:12px; color:var(--text-secondary); margin-bottom:15px; line-height: 1.4;">
+                                Monte Carlo reshuffling is computationally cheap because indicator calculations have already been performed. Each simulation only needs to shuffle the trade sequence and recompute the resulting equity curve, making the complexity roughly O(n) per simulation. With 20 trades and 1,000 simulations, the workload is tiny for modern JavaScript engines and executes almost instantly in the browser.
+                            </p>
+                            <div style="height:180px; width:100%; position:relative; margin-bottom:15px;">
+                                <canvas id="mc-distribution-canvas"></canvas>
+                            </div>
+                            <table class="metrics-table" style="width:100%; margin-top:auto;">
+                                <tbody>
+                                    <tr><td style="color:var(--text-secondary)">Median Return</td><td id="mc-median-return" style="text-align:right">-</td></tr>
+                                    <tr><td style="color:var(--text-secondary)">5th Percentile (Worst Case)</td><td id="mc-5th-return" style="text-align:right">-</td></tr>
+                                    <tr><td style="color:var(--text-secondary)">95th Percentile (Best Case)</td><td id="mc-95th-return" style="text-align:right">-</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Regime Detection -->
+                        <div class="glass-card" style="flex:1; display:flex; flex-direction:column;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:15px;">
+                                <i data-lucide="bar-chart-3" style="color:var(--color-success)"></i>
+                                <h3 style="font-family:var(--font-header); font-size:16px;">Regime Transition Analysis</h3>
+                            </div>
+                            <div style="height:100px; width:100%; position:relative; margin-bottom:15px; border-radius:4px; overflow:hidden;">
+                                <canvas id="regime-timeline-canvas"></canvas>
+                            </div>
+                            <table class="metrics-table" style="width:100%; margin-top:auto;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align:left">Regime</th>
+                                        <th style="text-align:right">Time %</th>
+                                        <th style="text-align:right">Return</th>
+                                        <th style="text-align:right">Win Rate</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="regime-results-tbody">
+                                    <tr id="row-regime-bull"><td><span style="color:var(--color-success)">●</span> Bull Trend</td><td style="text-align:right">-</td><td style="text-align:right">-</td><td style="text-align:right">-</td></tr>
+                                    <tr id="row-regime-bear"><td><span style="color:var(--color-danger)">●</span> Bear Trend</td><td style="text-align:right">-</td><td style="text-align:right">-</td><td style="text-align:right">-</td></tr>
+                                    <tr id="row-regime-side"><td><span style="color:var(--color-warning)">●</span> Sideways</td><td style="text-align:right">-</td><td style="text-align:right">-</td><td style="text-align:right">-</td></tr>
+                                    <tr id="row-regime-vol"><td><span style="color:var(--color-secondary)">●</span> High Volatility</td><td style="text-align:right">-</td><td style="text-align:right">-</td><td style="text-align:right">-</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 6: Portfolio Lab -->
+        <section id="page-portfolio" class="page-section">
+            <div class="page-header" style="margin-bottom: 20px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <h2>Multi-Strategy Portfolio Laboratory</h2>
+                </div>
+                <p>Construct, weight, and balance multiple quant strategies into a singular diversified trading portfolio model.</p>
+            </div>
+
+            <div class="workspace-layout">
+                <!-- Left: Portfolio Configuration -->
+                <div class="workspace-sidebar glass-card">
+                    <div class="sidebar-header-info" style="margin-bottom: 15px;">
+                        <h3 style="font-family: var(--font-header); font-size:16px;">Strategy Allocation</h3>
+                        <p class="strat-desc">Select strategies and allocate weights.</p>
+                    </div>
+
+                    <div id="portfolio-strategies-list" style="display:flex; flex-direction:column; gap:10px; margin-bottom: 20px; flex:1; overflow-y:auto;">
+                        <!-- Dynamically filled with checkboxes and sliders -->
+                    </div>
+
+                    <div style="padding-top:15px; border-top:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:13px; color:var(--text-secondary);">Total Allocation</span>
+                        <span id="portfolio-total-weight" style="font-weight:bold; font-family:var(--font-mono); color:var(--color-success);">0%</span>
+                    </div>
+
+                    <div class="sidebar-action-buttons" style="margin-top:20px;">
+                        <button class="btn btn-primary" style="width:100%;" id="btn-build-portfolio">
+                            <i data-lucide="layers"></i> Build Portfolio
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right: Portfolio Results -->
+                <div class="workspace-body" style="display:flex; flex-direction:column; gap:20px;">
+                    <!-- Portfolio Chart -->
+                    <div class="glass-card" style="height: 350px; display:flex; flex-direction:column;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                            <h3 style="font-size:16px; font-family:var(--font-header);">Diversified Equity Curve</h3>
+                        </div>
+                        <div style="flex:1; position:relative; width:100%; min-height:0;">
+                            <canvas id="portfolio-chart-canvas"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Correlation & Stats -->
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+                        <div class="glass-card">
+                            <h3 style="font-family: var(--font-header); font-size:16px; border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:15px;">Pearson Correlation Matrix</h3>
+                            <div style="overflow-x:auto;">
+                                <table class="correlation-table-mock" id="portfolio-correlation-table" style="width:100%;">
+                                    <!-- Filled dynamically -->
+                                    <tr><td style="color:var(--text-muted); text-align:center; padding:20px;">Build portfolio to generate matrix.</td></tr>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="glass-card">
+                            <h3 style="font-family: var(--font-header); font-size:16px; border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:15px;">Portfolio Metrics</h3>
+                            <table class="metrics-table" style="width:100%;">
+                                <tbody>
+                                    <tr><td style="color:var(--text-secondary)">Combined CAGR</td><td id="port-cagr" style="text-align:right">-</td></tr>
+                                    <tr><td style="color:var(--text-secondary)">Combined Sharpe</td><td id="port-sharpe" style="text-align:right">-</td></tr>
+                                    <tr><td style="color:var(--text-secondary)">Combined Max DD</td><td id="port-max-dd" style="text-align:right">-</td></tr>
+                                    <tr><td style="color:var(--text-secondary)">Diversification Ratio</td><td id="port-div-ratio" style="text-align:right">-</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 7: Production Report -->
+        <section id="page-report" class="page-section">
+            <div class="workspace-layout">
+                <!-- Left checklist column -->
+                <div class="workspace-sidebar glass-card">
+                    <div class="sidebar-header-info">
+                        <h3 id="report-strat-name">Strategy Name</h3>
+                        <span class="category-tag" id="report-strat-cat">Verification</span>
+                        <p class="strat-desc">Reviewing production suitability metrics.</p>
+                    </div>
+
+                    <div class="sidebar-scrollable-content">
+                        <div class="config-divider">Readiness Scorecard</div>
+                        <div class="readiness-score-box">
+                            <span class="label">Robustness Rating</span>
+                            <span class="value success" style="color:var(--color-success);">PASS ✓</span>
+                        </div>
+
+                        <div class="config-divider" style="margin-top: 20px;">Verification Checklist</div>
+                        <ul class="production-checklist-ui">
+                            <li class="passed"><i data-lucide="check-circle-2"></i> Sharpe Ratio &gt; 1.0</li>
+                            <li class="passed"><i data-lucide="check-circle-2"></i> Max Drawdown &lt; 20%</li>
+                            <li class="passed"><i data-lucide="check-circle-2"></i> Validated Out-of-sample</li>
+                            <li class="passed"><i data-lucide="check-circle-2"></i> Reshuffling Profitability</li>
+                            <li class="passed"><i data-lucide="check-circle-2"></i> SDK Code Compliance</li>
+                        </ul>
+                    </div>
+
+                    <div class="sidebar-action-buttons">
+                        <button class="btn btn-secondary" style="width:100%;" id="btn-export-trades">
+                            <i data-lucide="download"></i> Export Trade Ledger
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right ledger column -->
+                <div class="workspace-body">
+                    <!-- Trade Replay Terminal -->
+                    <div class="glass-card" style="margin-bottom: 24px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:10px; margin-bottom:15px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <h3 style="font-size:16px; font-family:var(--font-header);">Trade Replay Terminal</h3>
+                            </div>
+                            <div class="replay-controls" style="display:flex; gap:10px;">
+                                <button class="btn btn-secondary" id="btn-replay-play" style="padding:6px 12px;"><i data-lucide="play" style="width:14px; height:14px;"></i> Play</button>
+                                <button class="btn btn-secondary" id="btn-replay-pause" style="padding:6px 12px;"><i data-lucide="pause" style="width:14px; height:14px;"></i> Pause</button>
+                                <select class="input-field" id="sel-replay-speed" style="padding:4px 8px; height:auto; font-size:12px;">
+                                    <option value="1">1x Speed</option>
+                                    <option value="5" selected>5x Speed</option>
+                                    <option value="20">20x Speed</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="height:350px; background:rgba(0,0,0,0.3); border-radius: var(--radius-md); display:flex; align-items:center; justify-content:center; border:1px solid var(--border-color); position:relative; overflow:hidden;">
+                            <canvas id="trade-replay-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%;"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Ledger Table -->
+                    <div class="glass-card" style="display:flex; flex-direction:column; gap:16px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <h2 style="font-size:16px; font-family:var(--font-header);">Historical Execution Ledger</h2>
+                                <div style="font-size:12px; color:var(--text-secondary)">Individual trade transactions list for audited execution parameters.</div>
+                            </div>
+                        </div>
+                        
+                        <div class="trade-log-container">
+                            <table class="trade-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Date / Time</th>
+                                        <th>Symbol</th>
+                                        <th>Side</th>
+                                        <th>Entry Price</th>
+                                        <th>Exit Price</th>
+                                        <th>Net Return</th>
+                                        <th>Profit/Loss ($)</th>
+                                        <th>Leverage State</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="trade-log-tbody">
+                                    <!-- Filled dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 8: AI Research Agent Teaser -->
+        <section id="page-research" class="page-section">
+            <div class="page-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <h2>AI Research Agent</h2>
+                    <span class="badge-phase">PHASE 3 AGENT</span>
+                </div>
+                <p>Pure algorithmic rules-based automated strategy auditor. Pinpoints mathematical design flaws and suggests robustness enhancements.</p>
+            </div>
+
+            <div class="agent-teaser-layout">
+                <div class="glass-card" style="padding: 24px;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom:15px;">
+                        <button class="btn btn-primary" id="btn-run-agent"><i data-lucide="cpu"></i> Generate Diagnostic Report</button>
+                        <div class="readiness-score-box">
+                            <span class="label">Deployment Score</span>
+                            <span class="value" id="agent-deployment-score" style="font-family:var(--font-mono)">-</span>
+                        </div>
+                    </div>
+
+                    <div id="agent-report-container" style="display:none; flex-direction:column; gap:20px;">
+                        <div class="agent-msg bot">
+                            <div class="avatar" style="font-size:24px;">🤖</div>
+                            <div class="bubble" style="width:100%; background:var(--bg-lighter); padding:20px; border-radius:8px;">
+                                <strong style="display:block; margin-bottom:10px; font-size:16px;">System Diagnostic Completed</strong>
+                                <p id="agent-intro-text" style="color:var(--text-secondary); margin-bottom:15px; font-size:13px;"></p>
+                                
+                                <ul class="findings-list" id="agent-findings-list" style="list-style:none; padding:0; display:flex; flex-direction:column; gap:10px;">
+                                    <!-- Populated dynamically -->
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="agent-msg bot">
+                            <div class="avatar" style="font-size:24px;">🤖</div>
+                            <div class="bubble" style="width:100%; background:var(--bg-lighter); padding:20px; border-radius:8px;">
+                                <strong style="display:block; margin-bottom:10px; font-size:16px;">Overfitting Risk Assessment</strong>
+                                <p id="agent-overfit-text" style="color:var(--text-secondary); font-size:13px;">-</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="text-align:center; margin-top:25px;">
+                <a href="#backtest" class="btn btn-secondary">Return to Backtest Lab</a>
+            </div>
+        </section>
+    </main>
+</div>
+
+<!-- Upload Strategy Dialog Overlay (Quick Modal preserved for backward compatibility) -->
+<div id="upload-dialog" class="modal-overlay" style="display:none;">
+    <div class="modal-card glass-card">
+        <div class="modal-header">
+            <h2 style="font-size:18px; font-family:var(--font-header);">Quick Upload Custom Strategy</h2>
+            <button class="modal-close" id="btn-close-upload">&times;</button>
+        </div>
+        <div class="modal-body" style="display:flex; flex-direction:column; gap:16px; margin-top:15px;">
+            <div class="input-group">
+                <label class="input-label" for="upload-strategy-name">Workspace / Strategy Name</label>
+                <input type="text" id="upload-strategy-name" class="input-field" placeholder="e.g. My Custom Strategy">
+            </div>
+            <div class="input-group">
+                <label class="input-label" for="upload-file-input">Strategy File (.py or .mq5)</label>
+                <input type="file" id="upload-file-input" class="input-field" accept=".py,.mq5">
+            </div>
+            <div style="font-size:11px; color:var(--text-muted);">
+                Uploading a Python strategy will validate it against the Stratestic SDK. Uploading an MQ5 file will translate it to Python first.
+            </div>
+            <div class="console-logs" id="upload-terminal" style="height:100px; display:none;">
+                <!-- Logs from uploading/compiling -->
+            </div>
+        </div>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+            <button class="btn btn-secondary" id="btn-cancel-upload">Cancel</button>
+            <button class="btn btn-primary" id="btn-submit-upload">Upload & Instantiate</button>
+        </div>
+    </div>
+</div>
+
+<!-- Load Chart.js and Lucide Icons -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide/dist/umd/lucide.min.js"></script>
+<script src="index.js"></script>
+</body>
+</html>

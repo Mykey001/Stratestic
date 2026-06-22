@@ -1,0 +1,36 @@
+/* Validation Lab Custom Styles */
+.heatmap-container canvas {
+    cursor: crosshair;
+}
+#heatmap-tooltip {
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    backdrop-filter: blur(5px);
+    color: var(--text-primary);
+}
+
+.wfa-table th {
+    padding: 10px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+}
+.wfa-table td {
+    padding: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+    font-size: 12px;
+    font-family: var(--font-mono);
+}
+.col-train { color: var(--text-primary); }
+.col-val { color: var(--color-primary); }
+.col-test { color: var(--color-secondary); }
+
+.timeline-segment {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    color: #fff;
+}

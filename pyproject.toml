@@ -1,0 +1,61 @@
+[tool.poetry]
+name = "stratestic"
+version = "2.0.0"
+description = "Universal backtesting framework for Python trading strategies with ML utilities"
+license = "MIT"
+authors = ["Diogo Matos Chaves <diogo_chaves@hotmail.com>"]
+readme = "README.md"
+repository = "https://github.com/diogomatoschaves/stratestic"
+keywords = ["backtesting", "trading", "algotrading", "trading-strategies", "algorithmic-trading", "machine-learning", "optimization"]
+
+[tool.poetry.dependencies]
+# <3.13 is imposed by geneal; bump once geneal supports 3.13
+python = ">=3.10,<3.13"
+matplotlib = "^3.8"
+# numpy <2.0 and numba <0.60 are imposed by geneal; bump once geneal updates
+numpy = "^1.26"
+scipy = "^1.11"
+pandas = "^2.1"
+seaborn = "^0.13"
+ta = "^0.11"
+humanfriendly = "^10.0"
+plotly = "^5.14.1"
+tzdata = "*"
+progressbar2 = "^4.2.0"
+scikit-learn = "^1.3"
+dill = "^0.3.8"
+geneal = "^0.8.3"
+numba = "^0.59"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-cov = "^6.0"
+pytest-mock = "^3.5.1"
+pytest-env = "^1.1.3"
+pytest-timeout = "^2.3"
+ipython = "^8.0"
+ruff = "^0.9"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+stratestic = "stratestic.cli:main"
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest fixtures are imported to be injected by name; expected-output fixture
+# files are generated and loaded via execfile
+"tests/**" = ["F401", "F403", "F405", "F811", "E402"]
+# package re-exports
+"**/__init__.py" = ["F401", "F403"]
+# sets NUMBA_DISABLE_JIT before importing stratestic, deliberately
+"scripts/regenerate_fixtures.py" = ["E402"]

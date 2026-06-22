@@ -1,0 +1,57 @@
+# Publishes the package to PyPI when a release is published (or manually).
+# Note: the PyPI project is "stratestic"; this private fork's package name is
+# "stratestic-private", so publishing from here requires aligning the name in
+# pyproject.toml first (releases normally happen from the public repo).
+
+name: Upload stratestic to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build project distribution 📦
+    runs-on: ubuntu-latest
+    env:
+      POETRY_VIRTUALENVS_CREATE: "false"
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install poetry
+      run: |
+        pipx install poetry
+        poetry self add poetry-bumpversion
+    - name: Build
+      run: |
+        poetry version ${{ github.ref_name }}
+        poetry build
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+  publish-to-pypi:
+    name: Publish stratestic 📦 to PyPI
+    needs:
+    - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/stratestic
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1

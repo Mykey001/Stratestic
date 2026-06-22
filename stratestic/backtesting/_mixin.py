@@ -1,0 +1,1227 @@
+import json
+import logging
+import math
+import os
+from datetime import timedelta
+from typing import Literal
+
+import numpy as np
+import pandas as pd
+import progressbar
+
+from stratestic.backtesting.helpers import Trade
+from stratestic.backtesting.helpers.margin import (
+    get_maintenance_margin,
+    calculate_liquidation_price,
+    calculate_margin_ratio,
+)
+from stratestic.backtesting.helpers._equity import (
+    calculate_leveraged_equity,
+    calculate_static_equity,
+    calculate_static_equity_panel,
+    static_trade_result,
+    SHORT_MODELS,
+)
+from stratestic.backtesting.helpers.evaluation import (
+    get_results,
+    log_results,
+    BUY_AND_HOLD,
+    CUM_SUM_STRATEGY,
+    CUM_SUM_STRATEGY_TC,
+    MARGIN_RATIO,
+    SIDE, WEIGHT, side_col, STRATEGY_RETURNS_TC, STRATEGY_RETURNS
+)
+from stratestic.backtesting.helpers.plotting import plot_backtest_results
+from stratestic.backtesting.optimization import strategy_optimizer, adapt_optimization_input, get_params_mapping, \
+    optimization_options_factor, optimization_options
+from stratestic.utils.config_parser import get_config
+from stratestic.utils.exceptions import SymbolInvalid, LeverageInvalid
+from stratestic.utils.logger import configure_logger
+from stratestic.utils.panel import is_panel
+
+config_vars = get_config('general')
+
+configure_logger(config_vars.logger_level)
+
+
+class BacktestMixin:
+    """A Mixin class for backtesting trading strategies.
+
+    Attributes:
+    -----------
+    symbol : str
+        The trading symbol used for the backtest.
+    tc : float
+        The transaction costs (e.g. spread, commissions) as a percentage.
+    results : pandas.DataFrame
+        A DataFrame containing the results of the backtest.
+
+    Methods:
+    --------
+    run(params=None, print_results=True, plot_results=True, plot_positions=False):
+        Runs the trading strategy and prints and/or plots the results.
+    optimize(params, **kwargs):
+        Optimizes the trading strategy using brute force.
+    _test_strategy(params=None, print_results=True, plot_results=True, plot_positions=False):
+        Tests the trading strategy on historical data.
+    _assess_strategy(data, title, print_results=True, plot_results=True, plot_positions=True):
+        Assesses the performance of the trading strategy on historical data.
+    plot_results(title, plot_positions=True):
+        Plots the performance of the trading strategy compared to a buy and hold strategy.
+    _gen_repeating(s):
+        A generator function that groups repeated elements in an iterable.
+    plot_func(ax, group):
+        A function used for plotting positions.
+    """
+    def __init__(
+        self,
+        symbol,
+        amount,
+        trading_costs,
+        leverage=1,
+        margin_threshold=0.9,
+        exchange='binance',
+        short_model='static'
+    ):
+        """
+        Initialize the BacktestMixin object.
+
+        Parameters:
+        -----------
+        symbol : str
+            The trading symbol to use for the backtest.
+        amount : float
+            The initial amount of capital to allocate for the backtest.
+        trading_costs : float
+            The transaction costs (e.g., spread, commissions) as a percentage.
+        leverage : float, optional
+            The initial leverage to apply for margin trading. Default is 1.
+        margin_threshold : float, optional
+            The margin ratio threshold for margin call detection. Default is 0.8.
+        exchange : str, optional
+            The exchange to simulate the backtest on. Default is 'binance'.
+        short_model : str, optional
+            How short positions are modeled. "static" (default) models a
+            real fixed-units short (pnl = 1 - exit/entry, profit capped at
+            +100%), matching what an actual exchange short pays. "inverse"
+            treats a short as a continuously-rebalanced inverse position
+            (pnl = entry/exit - 1, symmetric with longs in log-return
+            space). Longs are identical under both models.
+
+        Raises:
+        -------
+        SymbolInvalid:
+            If the specified trading symbol is not found in the leverage brackets.
+
+        Notes:
+        ------
+        If a leverage other than 1 is used, margin simulation is enabled and the
+        leverage brackets for the specified symbol are loaded.
+        """
+        self.exchange = exchange
+
+        self.include_margin = False
+        self.leverage_limits = [1, 125]
+
+        self.set_leverage(leverage)
+        self.set_margin_threshold(margin_threshold)
+        self.set_short_model(short_model)
+
+        self.amount = amount
+        self.symbol = symbol
+        self.tc = trading_costs / 100
+        self.strategy = None
+
+        self.perf = 0
+        self.outperf = 0
+        self.results = None
+
+        if self.leverage != 1:
+            self.include_margin = True
+            # panels have no single symbol: their brackets are loaded per
+            # symbol once the panel's symbols are known (at test time)
+            if self.symbol is not None:
+                self._load_leverage_brackets()
+
+        self.bar = None
+        self.optimization_steps = 0
+
+        self._optimizer = None
+
+    def __getattr__(self, attr):
+        """
+        Overrides the __getattr__ method to get attributes from the trading strategy object.
+
+        Parameters
+        ----------
+        attr : str
+            The attribute to be retrieved.
+
+        Returns
+        -------
+        object
+            The attribute object.
+        """
+        if attr == 'strategy':
+            raise AttributeError(attr)
+
+        try:
+            return getattr(self.strategy, attr)
+        except AttributeError:
+            raise AttributeError(
+                f"'{type(self).__name__}' object (and its strategy) has no attribute '{attr}'"
+            ) from None
+
+    def __repr__(self):
+        extra_title = (f"<b>Initial Amount</b> = {self.amount} | "
+                       f"<b>Trading Costs</b> = {self.tc * 100}% | "
+                       f"<b>Leverage</b> = {self.leverage}")
+        if self.is_panel:
+            extra_title += f" | <b>Symbols</b> = {', '.join(self.symbols)}"
+        return extra_title + '<br>' + self.strategy.__repr__()
+
+    def set_leverage(self, leverage):
+        if isinstance(leverage, int) and self.leverage_limits[0] <= leverage <= self.leverage_limits[1]:
+            self.leverage = leverage
+        else:
+            raise LeverageInvalid(leverage)
+
+    def set_margin_threshold(self, margin_threshold):
+        if isinstance(margin_threshold, (int, float)) and 0 < margin_threshold <= 1:
+            self.margin_threshold = margin_threshold
+        else:
+            raise ValueError('Margin threshold must be between 0 and 1.')
+
+    def set_short_model(self, short_model):
+        if short_model in SHORT_MODELS:
+            self.short_model = short_model
+        else:
+            raise ValueError(f"short_model must be one of: {', '.join(SHORT_MODELS)}")
+
+    def load_data(self, data=None, csv_path=None):
+        """
+        Loads market data into the trading strategy from a pandas DataFrame or a CSV file.
+        If no data source is explicitly provided, it attempts to load data from a default CSV
+        file path specified in the configuration.
+
+        Parameters
+        ----------
+        data : pd.DataFrame, optional
+            A pandas DataFrame containing market data. Expected to have a 'date' column as
+            he index and OHLCV columns. If provided, this data is used directly.
+        csv_path : str, optional
+            The file path to a CSV file containing market data. The CSV is expected to have
+            a 'date' column that will be used as the index, along with OHLCV columns.
+            If `csv_path` is provided, it takes precedence over `data`.
+
+        Notes
+        -----
+        - If both `data` and `csv_path` are None, the method attempts to load the data from
+        a default CSV file path specified by `config_vars.ohlc_data_file`.
+        - The method ensures there are no duplicated indices in the loaded data by keeping
+        the last occurrence of any duplicated 'date' index.
+        - This method sets the loaded data as the current dataset for the strategy
+        and makes a copy of the original data for internal use.
+
+        Raises
+        ------
+        FileNotFoundError
+            If a `csv_path` is specified but the file cannot be found at the provided path.
+        pd.errors.EmptyDataError
+            If the CSV file is empty or if it contains only headers without any data rows.
+
+        Examples
+        --------
+        >>> strategy_instance.load_data(csv_path='path/to/your/data.csv')
+        This will load the market data from the specified CSV file and prepare it for the strategy.
+
+        >>> strategy_instance.load_data(data=your_dataframe)
+        This will directly use the provided DataFrame as the market data for the strategy.
+        """
+
+        if data is None or csv_path:
+            default_file_path = os.path.abspath(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    '..',
+                    config_vars.ohlc_data_file
+                )
+            )
+            csv_path = csv_path if csv_path else default_file_path
+            data = pd.read_csv(csv_path, index_col='date', parse_dates=['date'])
+            data = data[~data.index.duplicated(keep='last')]  # remove duplicates
+
+        self._original_data = data
+
+        self.set_data(data.copy(), self.strategy)
+
+    def run(self, print_results=True, plot_results=True, leverage=None):
+        """
+        Executes the trading strategy, evaluates its performance, and optionally prints and plots the results.
+        The method supports applying leverage to the trading strategy to assess its impact on performance.
+
+        Parameters
+        ----------
+        print_results : bool, optional
+            If True (default), the performance summary of the trading strategy is printed to the console.
+            The summary typically includes key performance indicators such as net profit, Sharpe ratio,
+            maximum drawdown, and other relevant metrics.
+        plot_results : bool, optional
+            If True (default), the method generates plots comparing the trading strategy's performance
+            against a benchmark, such as a "buy and hold" strategy. These plots can include equity curves,
+            drawdown periods, and other performance metrics visualizations.
+        leverage : int or float, optional
+            The leverage level to apply to the trading strategy during the backtest. This parameter
+            adjusts the size of positions taken by the strategy proportionally. If None (default),
+            no leverage is applied. Note that using leverage can significantly increase both potential
+            returns and potential risks.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        - The method internally calls a private method `_test_strategy` to perform the backtest,
+        which should implement the actual backtesting logic, including applying leverage,
+        calculating performance metrics, and handling plotting.
+        - The performance metrics (`perf`), outperformance metrics (`outperf`), and any additional
+        results (`results`) are stored as attributes of the strategy instance after the method completes.
+        This allows for further analysis or external reporting.
+
+        Examples
+        --------
+        >>> strategy_instance.run(print_results=True, plot_results=True, leverage=2)
+        This example runs the strategy with 2x leverage and both prints and plots the results.
+
+        Raises
+        ------
+        ValueError
+            If an invalid `leverage` value is provided (e.g., negative numbers).
+        """
+
+        if leverage is not None:
+            self.set_leverage(leverage)
+
+        perf, outperf, results = self._test_strategy(print_results=print_results, plot_results=plot_results)
+
+        self.perf = perf
+        self.outperf = outperf
+        self.results = results
+
+    def optimize(
+        self,
+        params,
+        optimization_metric="Return",
+        optimizer: Literal["brute_force", "gen_alg"] = 'brute_force',
+        **kwargs
+    ):
+        """Optimizes the trading strategy using brute force.
+
+        Parameters:
+        -----------
+        params : dict, list
+            A dictionary or list (for strategy combination) containing the parameters to optimize.
+            The parameters must be given as the keywords of a dictionary, and the value is an array
+            of the lower limit, upper limit and step, respectively.
+
+            Example for single strategy:
+                params = dict(window=(10, 20, 1))
+
+            Example for multiple strategies
+                params = [dict(window=(10, 20, 1)), dict(ma=(30, 50, 2)]
+        optimization_metric : str, optional
+            The metric by which to perform the optimization. Option between:
+            return_pct, sharpe_ratio, sortino_ratio, calmar_ratio, win_rate,
+            profit_factor, sqn, expectancy, volatility_pct_annualized,
+            max_drawdown, avg_drawdown, max_drawdown_duration
+        optimizer : str, optional
+            Choice of algorithm for the optimization.
+        **kwargs : dict
+            Additional arguments to pass to the `optimizing` function.
+
+        Returns:
+        --------
+        opt : numpy.ndarray
+            The optimal parameter values.
+        -self._update_and_run(opt, plot_results=True) : float
+            The negative performance of the strategy using the optimal parameter values.
+        """
+
+        self._check_metric_input(optimization_metric)
+        self._check_optimizer_input(optimizer)
+
+        opt_params, strategy_params_mapping, optimization_steps = adapt_optimization_input(self.strategy, params)
+
+        self.bar = progressbar.ProgressBar(
+            max_value=optimization_steps if self._optimizer == 'brute_force' else progressbar.UnknownLength,
+            redirect_stdout=True
+        )
+        self.optimization_steps = 0
+
+        opt = strategy_optimizer(
+            self._update_and_run,
+            opt_params,
+            (False, False, strategy_params_mapping, params),
+            optimizer,
+            **kwargs
+        )
+
+        if not isinstance(opt, (list, tuple, type(np.array([])))):
+            opt = np.array([opt])
+
+        self.bar.finish()
+        print()
+
+        optimized_params = get_params_mapping(self.strategy, opt, strategy_params_mapping, params)
+        optimized_result = self._update_and_run(opt, True, True, strategy_params_mapping, params)
+        optimized_result = optimized_result if self._optimizer == 'gen_alg' else -optimized_result
+
+        return optimized_params, optimized_result
+
+    def maximum_leverage(self, margin_threshold=None):
+        """
+        Find the maximum allowable leverage that keeps the margin ratio below a specified threshold.
+
+        Parameters:
+        -----------
+        threshold: float, optional
+            The desired maximum margin ratio threshold, must be between 0 and 1.
+
+        Raises:
+        -----------
+        ValueError: If the provided threshold is not within the valid range (0, 1].
+
+        Returns:
+        -----------
+        int:
+            The maximum allowable leverage that satisfies the specified margin ratio threshold.
+        """
+        initial_leverage = self.leverage
+        initial_margin_threshold = self.margin_threshold
+        initial_include_margin = self.include_margin
+
+        if margin_threshold is not None:
+            self.set_margin_threshold(margin_threshold)
+
+        self.include_margin = True
+
+        if self.is_panel:
+            self._load_leverage_brackets_panel()
+        else:
+            self._load_leverage_brackets()
+
+        left_limit, right_limit = self.leverage_limits
+
+        prev_leverage = 0
+
+        print('\tCalculating maximum allowed leverage', end='')
+
+        i = 0
+        while True:
+            leverage = math.floor((right_limit - left_limit) / 2) + left_limit
+
+            if leverage == prev_leverage:
+                break
+
+            self._test_strategy(leverage=leverage, print_results=False, plot_results=False)
+            if self.processed_data[MARGIN_RATIO].max() >= self.margin_threshold:
+                right_limit = leverage
+            else:
+                left_limit = leverage
+
+            prev_leverage = leverage
+            i += 1
+            print('.', end='')
+
+        logging.info('')
+
+        self.set_leverage(initial_leverage)
+        self.set_margin_threshold(initial_margin_threshold)
+        self.include_margin = initial_include_margin
+
+        return leverage
+
+    @property
+    def is_panel(self):
+        """True when the strategy is a multi-symbol (panel) strategy."""
+        return getattr(self.strategy, "is_multi_symbol", False)
+
+    @property
+    def symbols(self):
+        """The traded symbols: the panel's symbols, or the single symbol."""
+        return self.strategy.symbols if self.is_panel else [self.symbol]
+
+    def _check_panel_constraints(self):
+        if self.is_panel:
+            if self.short_model != 'static':
+                raise ValueError(
+                    "Multi-symbol backtests support only short_model='static'; "
+                    "the inverse model has no meaningful multi-asset interpretation."
+                )
+            if self.symbol is not None:
+                raise ValueError(
+                    "Do not pass a symbol to the backtester for multi-symbol "
+                    "strategies; the symbols come from the panel columns."
+                )
+            if self.include_margin:
+                self._load_leverage_brackets_panel()
+        elif self.strategy is not None and is_panel(getattr(self.strategy, "data", None)):
+            raise TypeError(
+                "Got a (symbol, field) panel DataFrame with a single-symbol "
+                "strategy; wrap the strategy in "
+                "stratestic.strategies.multi.BroadcastStrategy to apply it "
+                "per symbol."
+            )
+
+    def _test_strategy(self, params=None, leverage=None, print_results=True, plot_results=True, show_plot_no_tc=False):
+        """Tests the trading strategy on historical data.
+
+        Parameters:
+        -----------
+        params : dict or None
+            The parameters to use for the trading strategy
+        """
+        if leverage is not None:
+            self.set_leverage(leverage)
+
+        self._check_panel_constraints()
+
+        self._fix_original_data()
+
+        self._set_index_frequency()
+
+        self.set_parameters(params, data=self._original_data.copy())
+
+    def _check_metric_input(self, optimization_metric):
+        if optimization_metric not in optimization_options:
+            raise ValueError(f"The chosen metric is not supported. "
+                             f"Choose one of: {', '.join(optimization_options.keys())}")
+        else:
+            self.optimization_metric = optimization_options[optimization_metric]
+
+    def _check_optimizer_input(self, optimizer):
+        optimizer_options = ["brute_force", "gen_alg"]
+        if optimizer not in optimizer_options:
+            raise ValueError(f"The selected optimizer is not supported. "
+                             f"Choose one of: {', '.join(optimizer_options)}")
+        else:
+            self._optimizer = optimizer
+
+    def _set_index_frequency(self):
+        self.index_frequency = self._original_data.index.inferred_freq
+
+        if self.index_frequency is None:
+            diffs = pd.Series(self._original_data.index).diff().dropna()
+            self.index_frequency = diffs.mode().iloc[0]
+
+    def _sanitize_equity(self, df, trades):
+
+        if len(trades) == 0:
+            return df
+
+        trades_df = pd.DataFrame(trades)
+
+        # Bring equity to 0 if a trade has gotten to zero equity
+        no_funds_left_index = trades_df[trades_df["equity"].le(0)]["exit_date"]
+        if len(no_funds_left_index) > 0:
+            df.loc[no_funds_left_index.iloc[0]:, 'equity'] = 0
+
+        # Bring equity to 0 if a margin call happens. Panels instead model
+        # per-position isolated liquidations inside the recurrence.
+        if self.include_margin and not self.is_panel:
+            no_funds_left_index = df[df[MARGIN_RATIO] >= 1].index
+
+            if len(no_funds_left_index) > 0:
+                df.loc[no_funds_left_index[0]:, 'equity'] = 0
+
+        return df
+
+    @staticmethod
+    def _sanitize_trades(data, trades):
+        no_equity = data[CUM_SUM_STRATEGY_TC][data[CUM_SUM_STRATEGY_TC].le(0)].index
+
+        if len(no_equity) == 0:
+            return trades
+
+        trades_df = pd.DataFrame(trades).set_index('entry_date')
+
+        trades_df = trades_df[trades_df.index < no_equity[0]].copy()
+
+        trades_df["pnl"] = np.where(trades_df["pnl"] < -1, -1, trades_df["pnl"])
+
+        return [Trade(**row) for _, row in trades_df.reset_index().iterrows()]
+
+    def _sanitize_margin_ratio(self, df):
+        df[MARGIN_RATIO] = np.where(df[MARGIN_RATIO] > 1, 1, df[MARGIN_RATIO])
+        df[MARGIN_RATIO] = np.where(df[MARGIN_RATIO] < 0, 1, df[MARGIN_RATIO])
+        df[MARGIN_RATIO] = np.where(df[SIDE] == 0, 0, df[MARGIN_RATIO])
+
+        df[MARGIN_RATIO] = df[MARGIN_RATIO].fillna(0)
+
+        greater_than_index = df[df[MARGIN_RATIO].ge(1)].index.shift(1, freq=self.index_frequency)
+
+        if len(greater_than_index) > 0:
+            df.loc[greater_than_index[0]:, MARGIN_RATIO] = np.nan
+
+        return df
+
+    @staticmethod
+    def _get_trade_markers(df):
+        """Build an array that changes value on each bar where a new trade opens."""
+        new_trade = ((df["trades"] != 0) & (df[SIDE] != 0)).values
+
+        return np.cumsum(new_trade).astype(np.float64)
+
+    def _prepare_panel_arrays(self, data):
+        """
+        Builds the kernel input matrices from a panel with per-symbol side
+        (and optional weight) columns. This is the single source of truth
+        for both engines - the exact-equality invariant depends on both
+        consuming these same floats in the same symbol order.
+
+        Returns (symbols, returns_mat, sides_mat, weights_mat, legs_mat).
+        """
+        symbols = self.strategy.symbols
+        n_bars = len(data)
+
+        returns_mat = np.zeros((n_bars, len(symbols)))
+        sides_mat = np.zeros((n_bars, len(symbols)))
+        listed_mat = np.zeros((n_bars, len(symbols)), dtype=bool)
+
+        for j, symbol in enumerate(symbols):
+            sym_returns = data[(symbol, self._returns_col)].values
+            returns_nan = np.isnan(sym_returns)
+
+            returns_mat[:, j] = np.nan_to_num(sym_returns)
+            listed_mat[:, j] = np.cumsum(~returns_nan) > 0  # listed from first valid return
+
+            sides = np.nan_to_num(data[(symbol, SIDE)].values)
+            sides[returns_nan] = 0.0  # pre-listing / no-return bars are flat
+            sides_mat[:, j] = sides
+
+        returns_mat[0, :] = 0.0
+        self._panel_listed = listed_mat
+        # positions are force-closed on the final bar, like the scalar path
+        sides_mat[-1, :] = 0.0
+
+        # per-symbol trade legs: |side diff|, with the first bar's entry counted
+        legs_mat = np.abs(np.diff(sides_mat, axis=0, prepend=np.zeros((1, len(symbols)))))
+
+        weights_mat = self._build_weights_matrix(data, symbols, sides_mat)
+
+        return symbols, returns_mat, sides_mat, weights_mat, legs_mat
+
+    def _assemble_panel_processed_data(
+        self, index, symbols, returns_mat, sides_mat, legs_mat, equity_arr, contributions
+    ):
+        """Flat (string-column) processed-data frame for the panel path,
+        shared by both engines. 'side' is the open-position count so the
+        existing exposure/sanitizer semantics keep working. `equity_<symbol>`
+        is each symbol's contribution to the portfolio equity (an equal share
+        of the initial capital plus its cumulative pnl), so the per-symbol
+        curves sum to the portfolio equity."""
+        processed = pd.DataFrame(index=index)
+
+        equity_share = self.amount / len(symbols)
+        for j, symbol in enumerate(symbols):
+            processed[f"{self._returns_col}_{symbol}"] = returns_mat[:, j]
+            processed[side_col(symbol)] = sides_mat[:, j].astype('int')
+            processed[f"equity_{symbol}"] = equity_share + contributions[:, j]
+
+        processed[SIDE] = (sides_mat != 0).sum(axis=1).astype('int')
+        processed["trades"] = legs_mat.sum(axis=1).astype('int')
+        processed["equity"] = equity_arr
+
+        return processed
+
+    def _trim_panel_data(self, data):
+        """
+        Trim a panel to its backtestable rows, keeping the union of the
+        symbols' valid ranges instead of only their common window: a row is
+        dropped only when *every* symbol is unready (NaN side - warm-up or
+        unlisted) or has no return. A symbol still warming up (or not yet
+        listed) while others trade keeps the row; its position is masked to 0.
+
+        Both engines trim through this single method so they drop exactly the
+        same rows - the exact cross-engine equality invariant depends on it.
+        """
+        symbols = self.strategy.symbols
+
+        sided = self.calculate_positions(data.copy())
+        side_columns = [(symbol, SIDE) for symbol in symbols]
+        return_columns = [(symbol, self._returns_col) for symbol in symbols]
+
+        # keep a row if at least one symbol is ready (non-NaN side) and has a
+        # return: only the leading prefix where no symbol can trade is dropped,
+        # so no tradeable data is lost (a symbol still warming up or unlisted
+        # while others trade is kept, masked to 0)
+        keep = sided[side_columns].notna().any(axis=1) & data[return_columns].notna().any(axis=1)
+
+        return data[keep].copy()
+
+    def _run_panel_backtest(self, data):
+        """Vectorized panel path: shared array prep -> kernel -> shared finalization."""
+        symbols, returns_mat, sides_mat, weights_mat, legs_mat = self._prepare_panel_arrays(data)
+
+        liquidations = np.zeros(sides_mat.shape, dtype=np.bool_)
+
+        equity_arr, notionals, contributions = calculate_static_equity_panel(
+            sides_mat, returns_mat, weights_mat, liquidations,
+            self.tc, float(self.amount), float(self.leverage),
+        )
+
+        return self._finalize_panel_backtest(
+            data, symbols, returns_mat, sides_mat, weights_mat, legs_mat, equity_arr, notionals, contributions
+        )
+
+    def _finalize_panel_backtest(
+        self, data, symbols, returns_mat, sides_mat, weights_mat, legs_mat, equity_arr, notionals, contributions
+    ):
+        """
+        Shared tail of the panel backtest for both engines: trade retrieval,
+        the margin/liquidation pass, flat-frame assembly and the common
+        post-processing.
+        """
+        sides_orig = sides_mat
+        liquidations = np.zeros(sides_mat.shape, dtype=np.bool_)
+
+        trades = self._retrieve_trades_panel(data, symbols, sides_mat, notionals, equity_arr)
+
+        ratio_mat = None
+        if self.include_margin:
+            # Detect isolated-margin liquidations and re-run the recurrence
+            # with the liquidation flags, iterating to a fixed point: zeroing a
+            # liquidated position frees headroom, which can resize (and so
+            # newly breach) later positions, so a single pass can leave the
+            # equity/trades/margin-ratio mutually inconsistent. Each pass adds
+            # at least one liquidation, so it converges in <= len(trades) + 1.
+            for _ in range(len(trades) + 1):
+                ratio_mat = self._panel_margin_ratios(data, symbols, trades)
+                liquidations, masked_sides = self._detect_panel_liquidations(
+                    ratio_mat, sides_orig, trades, data.index, symbols, liquidations
+                )
+
+                if np.array_equal(masked_sides, sides_mat):
+                    break  # no new liquidations vs the current run
+
+                sides_mat = masked_sides
+                legs_mat = np.abs(np.diff(sides_mat, axis=0, prepend=np.zeros((1, len(symbols)))))
+
+                equity_arr, notionals, contributions = calculate_static_equity_panel(
+                    sides_mat, returns_mat, weights_mat, liquidations,
+                    self.tc, float(self.amount), float(self.leverage),
+                )
+
+                trades = self._retrieve_trades_panel(
+                    data, symbols, sides_mat, notionals, equity_arr, liquidations=liquidations
+                )
+
+        self._panel_inputs = (sides_mat, returns_mat, weights_mat, liquidations)
+
+        processed = self._assemble_panel_processed_data(
+            data.index, symbols, returns_mat, sides_mat, legs_mat, equity_arr, contributions
+        )
+
+        if self.include_margin:
+            # negative balances mean a breach beyond liquidation -> 1, then
+            # clamp into [0, 1], mirroring the scalar sanitizer
+            ratio_mat = np.nan_to_num(ratio_mat)
+            ratio_mat = np.where(ratio_mat < 0, 1.0, ratio_mat)
+            ratio_mat = np.clip(ratio_mat, 0.0, 1.0)
+
+            for j, symbol in enumerate(symbols):
+                processed[f"{MARGIN_RATIO}_{symbol}"] = ratio_mat[:, j]
+            processed[MARGIN_RATIO] = ratio_mat.max(axis=1)
+
+        processed = self._sanitize_equity(processed, trades)
+        processed = self._calculate_strategy_returns(processed)
+        processed = self._calculate_cumulative_returns(processed)
+        trades = self._sanitize_trades(processed, trades)
+
+        return processed, trades
+
+    def _retrieve_trades_panel(self, data, symbols, sides_mat, notionals, equity_arr, liquidations=None):
+        """Per-symbol trade extraction from the recurrence outputs (shared by
+        both engines; their floats are identical by construction)."""
+        trades = []
+
+        for j, symbol in enumerate(symbols):
+            prices_raw = data[(symbol, self._price_col)]
+
+            if not self._trade_on_close:
+                prices_raw = prices_raw.shift(-1)
+
+            last_close = data[(symbol, self._close_col)].iloc[-1]
+
+            sides = sides_mat[:, j]
+            previous = np.concatenate([[0.0], sides[:-1]])
+            entry_bars = np.flatnonzero((sides != previous) & (sides != 0))
+
+            for i in entry_bars:
+                side = sides[i]
+
+                exits = np.flatnonzero(sides[i + 1:] != side)
+                exit_bar = i + 1 + exits[0]  # guaranteed: the last row is forced flat
+
+                entry_raw = prices_raw.iloc[i]
+                exit_raw = prices_raw.iloc[exit_bar]
+
+                if np.isnan(exit_raw):
+                    # forced close on the final bar's close price
+                    exit_raw = last_close
+
+                entry_notional = notionals[i, j]
+
+                if entry_notional == 0:
+                    continue  # zero-weight entry: no capital, no trade
+
+                liquidated = liquidations is not None and liquidations[exit_bar, j]
+
+                if liquidated:
+                    # isolated margin: the position forfeits exactly its margin
+                    profit = -entry_notional / float(self.leverage)
+                    pnl = max(-1.0 / (1.0 + self.tc * side), -1.0)
+                else:
+                    pnl, profit = static_trade_result(
+                        entry_raw, exit_raw, side, self.tc, float(self.leverage), entry_notional
+                    )
+
+                trade = Trade(
+                    entry_date=data.index[i],
+                    exit_date=data.index[exit_bar],
+                    entry_price=entry_raw * (1 + self.tc * side),
+                    exit_price=exit_raw * (1 - self.tc * side),
+                    units=entry_notional / entry_raw,
+                    side=int(side),
+                    equity=equity_arr[exit_bar],
+                    amount=entry_notional,
+                    profit=profit,
+                    pnl=pnl,
+                    symbol=symbol,
+                )
+
+                if self.include_margin:
+                    maintenance_rate, maintenance_amount = get_maintenance_margin(
+                        self._symbol_brackets[symbol],
+                        [trade.units * trade.entry_price],
+                        self.exchange,
+                    )
+                    trade.maintenance_rate = maintenance_rate[0]
+                    trade.maintenance_amount = maintenance_amount[0]
+                    trade.liquidation_price = calculate_liquidation_price(
+                        trade.units,
+                        trade.entry_price,
+                        trade.side,
+                        self.leverage,
+                        trade.maintenance_rate,
+                        trade.maintenance_amount,
+                        exchange=self.exchange,
+                    )
+
+                trades.append(trade)
+
+        # deterministic order shared by both engines:
+        # entry date, then panel symbol order
+        symbol_order = {symbol: j for j, symbol in enumerate(symbols)}
+        trades.sort(key=lambda trade: (trade.entry_date, symbol_order[trade.symbol]))
+
+        return trades
+
+    def _panel_margin_ratios(self, data, symbols, trades):
+        """Per-bar, per-symbol isolated-margin ratios from the open trades,
+        with the scalar conventions: the position entered at bar e is marked
+        from bar e+1 with the bar's worst price (low for longs, high for
+        shorts) against the trade's (cost-adjusted) entry price."""
+        symbol_index = {symbol: j for j, symbol in enumerate(symbols)}
+        ratio_mat = np.zeros((len(data), len(symbols)))
+
+        for trade in trades:
+            j = symbol_index[trade.symbol]
+            entry_bar = data.index.get_loc(trade.entry_date)
+            exit_bar = data.index.get_loc(trade.exit_date)
+
+            if exit_bar <= entry_bar:
+                continue
+
+            mark_field = self._low_col if trade.side == 1 else self._high_col
+            mark_prices = data[(trade.symbol, mark_field)].values[entry_bar + 1:exit_bar + 1]
+
+            ratio_mat[entry_bar + 1:exit_bar + 1, j] = calculate_margin_ratio(
+                self.leverage,
+                trade.units,
+                trade.side,
+                trade.entry_price,
+                mark_prices,
+                trade.maintenance_rate,
+                trade.maintenance_amount,
+                exchange=self.exchange,
+            )
+
+        return ratio_mat
+
+    @staticmethod
+    def _detect_panel_liquidations(ratio_mat, sides_orig, trades, index, symbols, prior_liquidations):
+        """Detect isolated-margin liquidations from the current trades' ratios,
+        accumulate them with any prior ones, and rebuild the masked sides from
+        the original sides so every liquidated position's tail is zeroed."""
+        liquidations = prior_liquidations.copy()
+        symbol_index = {symbol: j for j, symbol in enumerate(symbols)}
+
+        for trade in trades:
+            j = symbol_index[trade.symbol]
+            entry_bar = index.get_loc(trade.entry_date)
+            exit_bar = index.get_loc(trade.exit_date)
+
+            # the exit bar is excluded: a breach exactly when the trade is
+            # already closing (or flipping) must not flag - or suppress - the
+            # next position. The position takes effect from entry_bar + 1.
+            segment = ratio_mat[entry_bar + 1:exit_bar, j]
+            # a negative ratio means the margin balance itself went negative
+            # (a gap beyond liquidation), like the scalar sanitizer's
+            # negative -> 1 mapping
+            hits = np.flatnonzero((segment >= 1) | (segment < 0))
+
+            if len(hits) > 0:
+                liquidation_bar = entry_bar + 1 + hits[0]
+                liquidations[liquidation_bar, j] = True
+
+        # rebuild the mask from the original sides: for every liquidation, zero
+        # the held tail until the position's next genuine side change
+        masked_sides = sides_orig.copy()
+        for liquidation_bar, j in zip(*np.nonzero(liquidations)):
+            side = sides_orig[liquidation_bar, j]  # the held side being liquidated
+            end = liquidation_bar
+            while end < sides_orig.shape[0] and sides_orig[end, j] == side:
+                end += 1
+            masked_sides[liquidation_bar:end, j] = 0
+
+        return liquidations, masked_sides
+
+    def _build_weights_matrix(self, data, symbols, sides_mat):
+        """Strategy-provided weights (validated), or equal weight across
+        the active positions of each bar."""
+        weight_columns = [(symbol, WEIGHT) for symbol in symbols if (symbol, WEIGHT) in data.columns]
+
+        if not weight_columns:
+            active = (sides_mat != 0)
+            n_active = active.sum(axis=1)
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                weights_mat = np.where(active, 1.0 / n_active[:, None], 0.0)
+
+            return weights_mat
+
+        weights_mat = np.zeros_like(sides_mat)
+        for j, symbol in enumerate(symbols):
+            column = data[(symbol, WEIGHT)] if (symbol, WEIGHT) in data.columns else None
+            weights_mat[:, j] = np.nan if column is None else column.values
+
+        active = (sides_mat != 0)
+
+        if np.isnan(weights_mat[active]).any():
+            raise ValueError(
+                "Strategy weights contain NaN on bars with an active position; "
+                "every nonzero side needs an explicit weight."
+            )
+
+        weights_mat = np.nan_to_num(weights_mat)
+
+        if (weights_mat < 0).any():
+            raise ValueError("Strategy weights must be non-negative.")
+
+        active_weight_sums = np.where(active, weights_mat, 0.0).sum(axis=1)
+        if (active_weight_sums > 1 + 1e-9).any():
+            raise ValueError(
+                "The weights of a bar's active positions must sum to at most 1 "
+                f"(max found: {active_weight_sums.max():.6f})."
+            )
+
+        return weights_mat
+
+    def _calculate_strategy_returns(self, df):
+        with np.errstate(divide='ignore', invalid='ignore'):
+            df[STRATEGY_RETURNS_TC] = np.log(df['equity'] / df['equity'].shift(1)).fillna(0)
+
+        if self.tc == 0:
+            df[STRATEGY_RETURNS] = df[STRATEGY_RETURNS_TC]
+            df.loc[df.index[0], STRATEGY_RETURNS] = 0
+
+            return df
+
+        # Reconstruct the cost-free curve by re-running the leveraged equity
+        # recurrence on the raw (cost-free) strategy returns. Under leverage,
+        # adding the costs back onto the leveraged log returns would understate
+        # their impact, since each cost's equity hit is amplified by leverage.
+        if self.is_panel:
+            # The cost-free curve re-runs the recurrence at tc=0 with the same
+            # positions and the same liquidation events. With no costs each
+            # position deploys slightly more notional, so a liquidation
+            # forfeits a (correspondingly larger) isolated margin - this is the
+            # honest "no trading costs" counterfactual, not an inconsistency,
+            # so the cost-free curve need not sit above the with-cost curve on
+            # liquidation bars.
+            sides_mat, returns_mat, weights_mat, liquidations = self._panel_inputs
+
+            equity_no_tc, _, _ = calculate_static_equity_panel(
+                sides_mat, returns_mat, weights_mat, liquidations,
+                0.0, float(self.amount), float(self.leverage),
+            )
+
+            equity_no_tc = pd.Series(equity_no_tc, index=df.index)
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                df[STRATEGY_RETURNS] = np.log(equity_no_tc / equity_no_tc.shift(1)).fillna(0)
+
+            df.loc[df.index[0], STRATEGY_RETURNS] = 0
+
+            return df
+
+        if self.short_model == 'static':
+            equity_no_tc = calculate_static_equity(
+                df[SIDE].values.astype(np.float64),
+                df[self._returns_col].fillna(0).values,
+                0.0,
+                float(self.amount),
+                float(self.leverage),
+            )
+        else:
+            raw_returns = (df[SIDE].shift(1) * df[self._returns_col]).fillna(0).values
+
+            equity_no_tc = calculate_leveraged_equity(
+                self._get_trade_markers(df),
+                raw_returns,
+                float(self.amount),
+                float(self.leverage),
+            )
+
+        equity_no_tc = pd.Series(equity_no_tc, index=df.index)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            df[STRATEGY_RETURNS] = np.log(equity_no_tc / equity_no_tc.shift(1)).fillna(0)
+
+        df.loc[df.index[0], STRATEGY_RETURNS] = 0
+
+        return df
+
+    def _calculate_cumulative_returns(self, data):
+        if self.is_panel:
+            # equal-weight buy & hold basket, averaging each symbol only over
+            # the bars where it is listed (a not-yet-listed symbol is held as
+            # cash rather than counted at par)
+            returns_mat = self._panel_inputs[1]
+            listed = self._panel_listed
+
+            growth = np.exp(np.cumsum(returns_mat, axis=0))  # 1.0 before listing
+            n_listed = listed.sum(axis=1)
+            basket = np.where(
+                n_listed > 0,
+                (growth * listed).sum(axis=1) / np.maximum(n_listed, 1),
+                1.0,
+            )
+            data[BUY_AND_HOLD] = basket
+        else:
+            data[BUY_AND_HOLD] = data[self._returns_col].cumsum().apply(np.exp).fillna(1)
+        data[CUM_SUM_STRATEGY_TC] = data[STRATEGY_RETURNS_TC].cumsum().apply(np.exp).fillna(1)
+
+        if STRATEGY_RETURNS in data.columns:
+            data[CUM_SUM_STRATEGY] = data[STRATEGY_RETURNS].cumsum().apply(np.exp).fillna(1)
+
+        return data
+
+    def _get_results(self, trades, processed_data):
+
+        processed_data["close_date"] = processed_data.index.shift(1, freq=self.index_frequency)
+
+        return get_results(
+            processed_data,
+            trades,
+            self.leverage,
+            self.amount,
+            self.tc,
+            config_vars.trading_days
+        )
+
+    @staticmethod
+    def print_results(results, print_results):
+        if not print_results:
+            return
+
+        log_results(results)
+
+    def plot_results(self, processed_data, plot_results=True, show_plot_no_tc=False):
+        """
+        Plot the performance of the trading strategy compared to a buy and hold strategy.
+
+        Parameters:
+        -----------
+        processed_data: pd.DataFrame
+            Dataframe containing the results of the backtest to be plotted.
+        plot_results: boolean, default True
+            Whether to plot the results.
+        show_plot_no_tc: boolean, default False
+            Whether to show the plot of the equity curve with no trading costs
+        """
+
+        columns = [
+            BUY_AND_HOLD,
+            CUM_SUM_STRATEGY,
+            CUM_SUM_STRATEGY_TC,
+        ]
+
+        data = processed_data.copy()[columns] * self.amount
+
+        if self.is_panel:
+            # per-symbol equity contribution lines (already absolute USD, and
+            # they sum to the portfolio equity)
+            for symbol in self.symbols:
+                data[f"equity_{symbol}"] = processed_data[f"equity_{symbol}"]
+
+        if self.include_margin:
+            data[MARGIN_RATIO] = processed_data[MARGIN_RATIO].copy() * 100
+
+        trades_df = pd.DataFrame(self.trades)
+
+        if plot_results:
+            if self.is_panel:
+                nr_strategies = len(self.symbols)
+            else:
+                nr_strategies = len([col for col in processed_data.columns if SIDE in col])
+
+            offset = max(0, nr_strategies - 2)
+
+            title = self.__repr__()
+
+            plot_backtest_results(
+                data,
+                trades_df,
+                self.margin_threshold,
+                self.index_frequency,
+                offset,
+                plot_margin_ratio=self.include_margin,
+                show_plot_no_tc=show_plot_no_tc,
+                title=title
+            )
+
+    def _update_and_run(self, parameters, *args):
+        """
+        Update the hyperparameters of the strategy with the given `args`,
+        and then run the strategy with the updated parameters.
+        The strategy is run by calling the `_test_strategy` method with the
+        updated parameters.
+
+        Parameters
+        ----------
+        parameters : array-like
+            A list of hyperparameters to be updated in the strategy.
+            The order of the elements in the list should match the order
+            of the strategy's hyperparameters, as returned by `self.params`.
+        plot_results : bool, optional
+            Whether to plot the results of the strategy after running it.
+
+        Returns
+        -------
+        float
+            The negative value of the strategy's score obtained with the
+            updated hyperparameters. The negative value is returned to
+            convert the maximization problem of the strategy's score into
+            a minimization problem, as required by optimization algorithms.
+
+        Raises
+        ------
+        IndexError
+            If the number of elements in `parameters` does not match the number
+            of hyperparameters in the strategy.
+
+        Notes
+        -----
+        This method is intended to be used as the objective function to
+        optimize the hyperparameters of the strategy using an optimization
+        algorithm. It updates the hyperparameters of the strategy with the
+        given `parameters`, then runs the strategy with the updated parameters,
+        and returns the negative of the score obtained by the strategy.
+        The negative is returned to convert the maximization problem of the
+        strategy's score into a minimization problem, as required by many
+        optimization algorithms.
+        """
+        print_results, plot_results, strategy_params_mapping, optimization_params = args
+
+        test_params = get_params_mapping(self.strategy, parameters, strategy_params_mapping, optimization_params)
+
+        results = self._test_strategy(test_params, print_results=print_results, plot_results=plot_results)
+
+        self.optimization_steps += 1
+
+        try:
+            self.bar.update(self.optimization_steps)
+        except ValueError:
+            pass
+
+        # The objective is minimized (after the factor flips maximize-metrics),
+        # so a failed backtest or an undefined metric (e.g. too few trades for
+        # SQN) must score +inf, never to be selected as the optimum.
+        if results[2] is not None:
+            result = results[2][self.optimization_metric]
+
+            # duration metrics are timedeltas; optimizers need floats
+            if isinstance(result, timedelta):
+                result = result.total_seconds()
+
+            result = result * optimization_options_factor[self.optimization_metric]
+
+            if np.isnan(result):
+                result = np.inf
+        else:
+            result = np.inf
+
+        if self._optimizer == 'gen_alg':
+            result = -result
+
+        return result
+
+    def _fix_original_data(self):
+        if self._original_data is None:
+            self._original_data = self.strategy.data.copy()
+
+            if is_panel(self._original_data):
+                # tuple columns: drop per-symbol (symbol, side/weight) fields
+                position_columns = [
+                    col for col in self._original_data
+                    if col[1] in (SIDE, WEIGHT)
+                ]
+            else:
+                position_columns = [col for col in self._original_data if SIDE in col]
+
+            self._original_data = self._original_data.drop(columns=position_columns)
+
+    def _load_leverage_brackets(self):
+
+        filepath = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', config_vars.leverage_brackets_file))
+
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+
+        brackets = {symbol["symbol"]: symbol["brackets"] for symbol in data}
+
+        try:
+            self._symbol_bracket = pd.DataFrame(brackets[self.symbol])
+        except KeyError:
+            raise SymbolInvalid(self.symbol)
+
+    def _load_leverage_brackets_panel(self):
+        """Per-symbol leverage brackets for every panel symbol, reporting all
+        missing symbols at once."""
+        filepath = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', config_vars.leverage_brackets_file))
+
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+
+        brackets = {symbol["symbol"]: symbol["brackets"] for symbol in data}
+
+        missing = [symbol for symbol in self.strategy.symbols if symbol not in brackets]
+        if missing:
+            raise SymbolInvalid(", ".join(missing))
+
+        self._symbol_brackets = {
+            symbol: pd.DataFrame(brackets[symbol]) for symbol in self.strategy.symbols
+        }
